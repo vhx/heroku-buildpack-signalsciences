@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+# check we have commands to start the application
+CMD=${@}
+if [ -z "$CMD" ]; then
+  echo "usage: $(basename $0) <application startup command>"
+  exit 1
+fi
+
+# do port configuration
+UPSTREAM_PORT=8081
+LISTENER_PORT=${PORT}
+export SIGSCI_REVERSE_PROXY=true
+export SIGSCI_REVERSE_PROXY_LISTENER=0.0.0.0:${LISTENER_PORT}
+export SIGSCI_REVERSE_PROXY_UPSTREAM=127.0.0.1:${UPSTREAM_PORT}
+export SIGSCI_CONFIG="$(pwd)/sigsci/etc/agent.conf"
+export PORT=${UPSTREAM_PORT}
+
+# Default waitfor timeout to 60.
+if [ -z $SIGSCI_WAITFOR_TIMEOUT ];
+then
+  export SIGSCI_WAITFOR_TIMEOUT=60
+fi;
+
+# Special case for Scala startup, change port in $CMD.
+CMD=`echo $CMD | sed -e "s/-Dhttp\.port=[0-9]*/-Dhttp.port=${UPSTREAM_PORT} /"`
+# Special case for Unicorn app startup, change port in $CMD
+# Reference, https://devcenter.heroku.com/articles/rails-unicorn#procfile
+CMD=`echo $CMD | sed -e "s/-p [0-9]*/-p ${UPSTREAM_PORT} /"`
+
+# start app process
+echo "Starting application: $CMD"
+(
+  $CMD
+) &
+
+# wait time for web process to start, then start sigsci-agent.
+echo "Waiting for web process to start..."
+sigsci/bin/wait-for 127.0.0.1:${UPSTREAM_PORT} -t ${SIGSCI_WAITFOR_TIMEOUT} -- echo "Starting Signal Sciences..." && sigsci/bin/sigsci-agent
+
+exit 0

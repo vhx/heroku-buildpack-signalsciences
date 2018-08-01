@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+
+# called as: compile BUILD_DIR CACHE_DIR ENV_DIR
+# reference: https://devcenter.heroku.com/articles/buildpack-api
+
+set -e
+
+BUILD_DIR=$1
+CACHE_DIR=$2
+ENV_DIR=$3
+
+function export_env_dir() {
+  env_dir=$ENV_DIR
+  whitelist_regex=${2:-''}
+  blacklist_regex=${3:-'^(PATH|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH)$'}
+  if [ -d "$env_dir" ]; then
+    for e in $(ls $env_dir); do
+      echo "$e" | grep -E "$whitelist_regex" | grep -qvE "$blacklist_regex" &&
+      export "$e=$(cat $env_dir/$e)"
+      :
+    done
+  fi
+}
+
+function log() {
+  MSG="$@"
+  echo "-----> $MSG"
+}
+
+export_env_dir
+
+BUILDPACK_DIR=$(pwd)
+SIGSCI_DIR=${BUILD_DIR}/sigsci
+
+# if agent URL is not given, then figure it out
+if [ -z "$SIGSCI_AGENT_URL" ]
+then
+  # if agent version not specified then get the latest
+  if [ -z "$SIGSCI_AGENT_VERSION" ]
+  then
+    SIGSCI_AGENT_VERSION=$(curl -s https://dl.signalsciences.net/sigsci-agent/VERSION)
+  fi
+
+  # check if version exists
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://dl.signalsciences.net/sigsci-agent/${SIGSCI_AGENT_VERSION}/VERSION)
+  if [ $STATUS -ne 200 ]
+  then
+    # if we don't get a 200 response, skip agent installation
+    log "SigSci Agent version ${SIGSCI_AGENT_VERSION} not found!"
+    log "SIGSCI AGENT WILL NOT BE INSTALLED!"
+    exit 1
+  fi
+
+  SIGSCI_AGENT_URL="https://dl.signalsciences.net/sigsci-agent/${SIGSCI_AGENT_VERSION}/linux/sigsci-agent_${SIGSCI_AGENT_VERSION}.tar.gz"
+else
+    SIGSCI_AGENT_VERSION=$SIGSCI_AGENT_URL
+fi
+
+# create our directory structure
+log "Creating sigsci directories"
+mkdir -p ${SIGSCI_DIR}/{etc,bin}
+
+# generate config file
+log "Populating sigsci agent configuration file"
+erb "$BUILDPACK_DIR/conf/sigsci-agent.conf.erb" > "${SIGSCI_DIR}/etc/agent.conf"
+
+# install agent
+log "Downloading and installing sigsci-agent (${SIGSCI_AGENT_VERSION})"
+curl -s $SIGSCI_AGENT_URL | tar -xz && mv sigsci-agent "${SIGSCI_DIR}/bin/sigsci-agent"
+
+chmod 700 ${SIGSCI_DIR}/bin/*
+
+log "Installing sigsci-start application wrapper"
+cp "${BUILDPACK_DIR}/bin/wait-for" ${SIGSCI_DIR}/bin
+cp "${BUILDPACK_DIR}/bin/sigsci-start" ${SIGSCI_DIR}/bin

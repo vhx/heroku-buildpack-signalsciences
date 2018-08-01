@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+# called as: detect BUILD_DIR
+
+# we don't depend on anything specific so we output our 
+# framework name and always exit 0
+echo "Signal Sciences Agent"
+exit 0
